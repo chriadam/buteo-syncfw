@@ -57,6 +57,7 @@ static const unsigned long long MAX_THREAD_STOP_WAIT_TIME = 5000;
 
 Synchronizer::Synchronizer( QCoreApplication* aApplication )
 :   iNetworkManager(0),
+    iAlreadySyncing(false),
     iSyncScheduler(0),
     iSyncBackup(0),
     iTransportTracker(0),
@@ -453,16 +454,26 @@ bool Synchronizer::startSync(const QString &aProfileName, bool aScheduled)
         emit syncStatus(aProfileName, Sync::SYNC_QUEUED, "", 0);
         success = true;
     }
+    else if (iAlreadySyncing)
+    {
+        LOG_DEBUG( "Serializing synchronization sessions, queuing sync request" );
+        iSyncQueue.enqueue(session);
+        emit syncStatus(aProfileName, Sync::SYNC_QUEUED, "", 0);
+        success = true;
+    }
     else
     {
         // Sync can be started now.
+        iAlreadySyncing = true; // pre-set to avoid race.
         success = startSyncNow(session);
+qWarning() << "--------> TRIGGERED SYNC:" << aProfileName << ", success =" << success;
         if (success)
         {
             emit syncStatus(aProfileName, Sync::SYNC_STARTED, "", 0);
         }
         else
         {
+            iAlreadySyncing = false;
             session->setFailureResult(SyncResults::SYNC_RESULT_FAILED, Buteo::SyncResults::INTERNAL_ERROR);
             emit syncStatus(aProfileName, Sync::SYNC_ERROR, "Internal Error", Buteo::SyncResults::INTERNAL_ERROR);
         }
@@ -596,6 +607,7 @@ void Synchronizer::onSessionFinished(const QString &aProfileName,
 
     LOG_DEBUG( "Session finished:" << aProfileName << ", status:" << aStatus);
 
+    iAlreadySyncing = false;
     if(iActiveSessions.contains(aProfileName))
     {
         SyncSession *session = iActiveSessions[aProfileName];
@@ -709,7 +721,7 @@ bool Synchronizer::startNextSync()
 {
     FUNCTION_CALL_TRACE;
 
-    if (iSyncQueue.isEmpty() || isBackupRestoreInProgress()) {
+    if (iAlreadySyncing || iSyncQueue.isEmpty() || isBackupRestoreInProgress()) {
         return false;
     }
 
@@ -760,6 +772,11 @@ bool Synchronizer::startNextSync()
     else if (!session->reserveStorages(&iStorageBooker))
     {
         LOG_DEBUG( "Needed storage(s) already in use" );
+        tryNext = false;
+    }
+    else if (iAlreadySyncing)
+    {
+        LOG_DEBUG( "Another profile is currently syncing" );
         tryNext = false;
     }
     else

@@ -372,6 +372,7 @@ private:
     ProfileManager iProfileManager;
 
     SyncQueue iSyncQueue;
+    bool iAlreadySyncing;
 
     StorageBooker iStorageBooker;
 
